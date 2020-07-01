@@ -5,10 +5,8 @@ from cv2 import cv2
 from imutils import face_utils
 from scipy.spatial import distance
 from imutils.face_utils import FACIAL_LANDMARKS_IDXS
-import time
-import playsound
-from playsound import playsound
-from threading import Thread
+from pygame import mixer
+
 
 # function to calculate the eye_aspect_ratio of one eye
 def eye_aspect_ration(points):
@@ -19,8 +17,9 @@ def eye_aspect_ration(points):
     # distance between the horizontal aspect points of the eye
     h = distance.euclidean(points[0], points[3])
 
-    eye_aspect_ratio = (v1 + v2)/(h)
+    eye_aspect_ratio = (v1 + v2) / h
     return eye_aspect_ratio
+
 
 # function to calculate the average of both eye's eye_aspect_ratio
 # and drawing a convexhull around the eye
@@ -43,12 +42,12 @@ def average_eye_aspect_ratio_calculator(shape, image):
     average_eye_aspect_ratio = (left_eye_aspect_ratio + right_eye_aspect_ratio) / 2.0
 
     # draw a convexHull around the eye
-    leftEyeHull = cv2.convexHull(left_eye_landmark_points)
-    rightEyeHull = cv2.convexHull(right_eye_landmark_points)
-    cv2.drawContours(image, [leftEyeHull], -1, (0, 255, 0), 1)
-    cv2.drawContours(image, [rightEyeHull], -1, (0, 255, 0), 1)
+    left_eye_hull = cv2.convexHull(left_eye_landmark_points)
+    right_eye_hull = cv2.convexHull(right_eye_landmark_points)
+    cv2.drawContours(image, [left_eye_hull], -1, (0, 255, 0), 1)
+    cv2.drawContours(image, [right_eye_hull], -1, (0, 255, 0), 1)
 
-    return (average_eye_aspect_ratio, image)
+    return average_eye_aspect_ratio, image
 
 
 def draw_rectangle_over_faces_in_the_image(rects, image):
@@ -56,10 +55,6 @@ def draw_rectangle_over_faces_in_the_image(rects, image):
         (x, y, w, h) = face_utils.rect_to_bb(rect)
         cv2.rectangle(image, (x, y), (x + w, y + h), (125, 122, 0), 2)
     return image
-
-
-def trigger_alarm(audio):
-    playsound(audio)
 
 
 # this function helps in identifying faces in the video stream
@@ -70,10 +65,11 @@ def drowsiness_detector():
     ap.add_argument("-p", "--shape-predictor", type=str, default="shape_predictor_68_face_landmarks.dat",
                     help="path to facial landmark predictor")
     ap.add_argument("-t", "--ear-threshold", type=float, default=0.4,
-                    help="minimum eye aspect ration threshold to be considered, below this threshold consider it as eye blink")
+                    help="minimum eye aspect ration threshold to be considered, below this threshold consider it as "
+                         "eye blink")
     ap.add_argument("-c", "--min-frames", type=int, default=15,
-                    help="minimum frames which need to considered to confirm that the preson has blinked his eye")
-    ap.add_argument("-a", "--audio-file", type=str, default="alarm.mp3",
+                    help="minimum frames which need to considered to confirm that the person has blinked his eye")
+    ap.add_argument("-a", "--audio-file", type=str, default="alarm.wav",
                     help="path to find the sudio file")
     args = vars(ap.parse_args())
 
@@ -89,6 +85,7 @@ def drowsiness_detector():
     detector = dlib.get_frontal_face_detector()
     predictor = dlib.shape_predictor(args["shape_predictor"])
 
+    mixer.init()
     while True:
         # capture a single frame from the webcam VideoStream
         (success, image) = capture.read()
@@ -97,7 +94,6 @@ def drowsiness_detector():
         image = imutils.resize(image, width=700)
         gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
 
-        face_start_time = time.time()
         # detect faces in the grayscale image
         rects = detector(gray, 1)
         image = draw_rectangle_over_faces_in_the_image(rects, image)
@@ -117,17 +113,23 @@ def drowsiness_detector():
             if average_eye_aspect_ratio < args["ear_threshold"]:
                 count += 1
                 cv2.putText(image, "Warning!!!", (580, 30),
-                                cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 0, 255), 2)
+                            cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 0, 255), 2)
 
                 if count > args["min_frames"]:
                     if not audio:
                         audio = True
-                        t = Thread(target= trigger_alarm, args= (args["audio_file"],))
-                        # t.daemon = True
-                        t.start()
+                        # to check whether audio is playing
+                        # if audio is off then start playing the audio
+                        if not mixer.music.get_busy():
+                            mixer.music.load(args["audio_file"])
+                            mixer.music.play()
             else:
                 count = 0
                 audio = False
+                # to check whether audio is playing
+                # if audio is on then start playing the audio
+                if mixer.music.get_busy():
+                    mixer.music.stop()
 
             # to write eye_aspect_ratio and count of blinks on the image
             cv2.putText(image, "eye_aspect_ratio: {:.2f}".format(average_eye_aspect_ratio), (20, 30),
@@ -135,10 +137,7 @@ def drowsiness_detector():
 
         # show the output image with the face detections + facial landmarks
         cv2.imshow("Output", image)
-        key = cv2.waitKey(1) & 0xFF
-
-        # to quit from the program, Enter 'q'
-        if key == ord("q"):
+        if cv2.waitKey(1) & 0xFF == ord("q"):
             break
 
     # once the programs get terminated all the window frames get destroyed
